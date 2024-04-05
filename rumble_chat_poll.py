@@ -88,4 +88,4 @@ class Poll(object):
 
     def parse_message_time(self, message):
         """Parse a message's timestamp to seconds since epoch"""
-        return time.strptime(message["created_on"], CONFIG["rumbleTimestampFormat"])
+        return time.mktime(time.strptime(message["created_on"], CONFIG["rumbleTimestampFormat"]))
