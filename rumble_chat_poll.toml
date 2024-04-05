@@ -1,0 +1,3 @@
+refreshRate = 10
+apiURLFile = "api_url.txt"
+rumbleTimestampFormat = "%Y-%m-%dT%H:%M:%S+00:00"
