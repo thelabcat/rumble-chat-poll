@@ -3,11 +3,15 @@
 #S.D.G.
 
 import tomllib
-from urllib import requests
+import requests
 import time
-#import threading
-#from tkinter import *
-#import tkinter.messagebox as mb
+import calendar
+import threading
+from tkinter import *
+from tkinter import ttk
+import tkinter.messagebox as mb
+
+MINIMUM_OPTIONS = 2 #Should never be less than two poll options, right?
 
 #Load config
 CONFIG_PATH = "rumble_chat_poll.toml"
@@ -18,13 +22,15 @@ with open(CONFIG["apiURLFile"]) as f:
     API_URL = f.read().strip()
 
 class Poll(object):
-    def __init__(self, options, numeric = True, livestream_id = None, runtime = 5 * 60):
+    def __init__(self, options, numeric = True, livestream_id = None, duration = 60, showupdate_method = None, showfinal_method = None):
         """Poll chat using Rumble's API. If numeric, accept number votes as well as exact matches. Runtime is in seconds"""
         self.numeric = numeric
         self.options = options
         self.voted = [] #List of users who voted
         self.livestream_id = livestream_id
-        self.duration = runtime
+        self.duration = duration
+        self.showupdate_method = showupdate_method
+        self.showfinal_method = showfinal_method
 
     def run_poll(self, init_ballot = True):
         """Run the poll until the time runs out"""
@@ -35,12 +41,22 @@ class Poll(object):
         self.start_time = time.time()
         while time.time() - self.start_time < self.duration:
             time.sleep(CONFIG["refreshRate"])
-            self.check_for_votes
+            self.check_for_votes()
+            if self.showupdate_method:
+                self.showupdate_method(self)
+
+        if self.showfinal_method:
+            self.showfinal_method(self)
 
     @property
     def current_winner(self):
         """Get current winner in the poll"""
         return max(self.ballot.keys(), key = lambda x: len(self.ballot[x])) #Find the option with the longest list of voters
+
+    @property
+    def total_votes(self):
+        """Get current number of votes"""
+        return sum([len(x) for x in self.ballot.values()])
 
     def init_ballot(self):
         """Create a dict ballot with lists for each option, to add votes to"""
@@ -50,8 +66,8 @@ class Poll(object):
 
     def check_for_votes(self):
         """Get recent messages from the Rumble API and check for new votes"""
-        response = requests.get(API_URL)
-        if response.status != 200:
+        response = requests.get(API_URL, headers = CONFIG["APIHeaders"])
+        if response.status_code != 200:
             print("HTTP error", response.status)
             return
         messages = self.get_livestream(response.json())["chat"]["recent_messages"]
@@ -60,13 +76,14 @@ class Poll(object):
                 #Vote!
                 self.ballot[self.parse_vote(message["text"])].append(message["username"])
                 self.voted.append(message["username"])
+                print(message["username"], "voted for", self.parse_vote(message["text"]))
 
     def parse_vote(self, text):
         """Parse if a message was a vote, return None if it was not, return the option if it was"""
         if text in self.options: #Exact option match
             return text
 
-        if self.numeric and text.isNumeric() and 0 < int(text) <= len(self.options): #Valid numerical vote
+        if self.numeric and text.isnumeric() and 0 < int(text) <= len(self.options): #Valid numerical vote
             return self.options[int(text) - 1]
 
         return False #Not a valid vote
@@ -87,5 +104,139 @@ class Poll(object):
         raise ValueError("No livestream matches the specified ID")
 
     def parse_message_time(self, message):
-        """Parse a message's timestamp to seconds since epoch"""
-        return time.mktime(time.strptime(message["created_on"], CONFIG["rumbleTimestampFormat"]))
+        """Parse a message's UTC timestamp to seconds since epoch"""
+        return calendar.timegm(time.strptime(message["created_on"], CONFIG["rumbleTimestampFormat"]))
+
+class PollOption(Frame):
+    def __init__(self, master, option_name = "", enable_delete = True):
+        """Poll option frame"""
+        super().__init__(master)
+        self.master = master
+        self.option_name = StringVar(self, option_name) #Default option name
+        self.__enable_delete = enable_delete
+        self.configstate_build()
+
+    @property
+    def enable_delete(self):
+        """Is delete enabled"""
+        return self.__enable_delete
+
+    @enable_delete.setter
+    def enable_delete(self, value):
+        """Enable or disable delete"""
+        if value:
+            self.delete_button["state"] = NORMAL
+            self.__enable_delete = True
+        else:
+            self.delete_button["state"] = DISABLED
+            self.__enable_delete = False
+
+    def configstate_build(self):
+        """Build the widgets for the configuration state"""
+        self.option_field = Entry(self, textvariable = self.option_name)
+        self.option_field.grid(row = 0, column = 0, sticky = E + W)
+        self.columnconfigure(0, weight = 1)
+
+        self.delete_button = Button(self, text = "Delete", command = lambda: self.master.delete_option(self))
+        self.enable_delete = self.__enable_delete #Set the button's state
+        self.delete_button.grid(row = 0, column = 1, sticky = E + W)
+
+    def switch_to_viewstate(self):
+        """Switch to poll option viewing state"""
+        self.option_field.destroy()
+        self.delete_button.destroy()
+
+        self.option_label = Label(self, textvariable = self.option_name)
+        self.option_label.grid(row = 0, column = 0, sticky = E + W)
+
+        self.option_amount_pb = ttk.Progressbar(self, orient = HORIZONTAL, length = 100, mode = "determinate")
+        #self.option_amount_label = Label(self, text = "0%")
+        self.option_amount_pb.grid(row = 0, column = 1, sticky = E + W)
+        #self.option_amount_label.grid(row = 0, column = 1, sticky = E + W)
+        self.columnconfigure(1, weight = 1)
+        self.columnconfigure(0, weight = 0)
+
+    @property
+    def percentage(self):
+        return self.option_amount_pb["value"]
+
+    @percentage.setter
+    def percentage(self, new_percentage):
+        if 0 <= int(new_percentage) <=100:
+            self.option_amount_pb["value"] = int(new_percentage)
+            #self.option_amount_label["text"] = str(int(new_percentage))+"%"
+
+class PollWindow(Tk):
+    def __init__(self):
+        """Window to make and run a poll"""
+        super().__init__()
+        self.option_frames = []
+        self.configstate_build(firstrun = True)
+        self.mainloop()
+
+    def configstate_build(self, firstrun = False):
+        """Build the GUI's configuration state view"""
+        while len(self.option_frames) < MINIMUM_OPTIONS: #Make sure we have minimum options
+            self.add_option(build = False)
+
+        for i in range(len(self.option_frames)): #Pack all the option frames
+            self.option_frames[i].grid(row = i, sticky = E + W)
+            self.rowconfigure(i, weight = 0) #Do not let option frames expand vertically
+
+        if firstrun: #Create add option and start buttons
+            self.add_option_button = Button(self, text = "+", command = self.add_option)
+            self.start_button = Button(self, text = "Start poll", command = self.start_poll)
+        #Pack the buttons
+        self.add_option_button.grid(row = i + 1, sticky = NSEW)
+        self.rowconfigure(i + 1, weight = 1)
+        self.start_button.grid(row = i + 2, sticky = NSEW)
+        self.rowconfigure(i + 2, weight = 1)
+
+        self.columnconfigure(0, weight = 1)
+
+    def add_option(self, build = True):
+        """Add an option to our list and possibly rebuild GUI"""
+        self.option_frames.append(PollOption(self))
+        if build:
+            self.configstate_build()
+
+    def delete_option(self, option_frame):
+        """Delete an option"""
+        option_frame.destroy()
+        self.option_frames.remove(option_frame)
+        self.configstate_build()
+
+    def start_poll(self):
+        """Start the poll, and show results"""
+        self.options = []
+        for option_frame in self.option_frames:
+            if not option_frame.option_name.get(): #Option field left blank
+                mb.showerror("Blank option", "Options cannot be blank.")
+                return
+            if option_frame.option_name.get() in self.options:
+                mb.showerror("Duplicate options", "Options must all be unique.")
+                return
+            self.options.append(option_frame.option_name.get())
+
+        for option_frame in self.option_frames:
+            option_frame.switch_to_viewstate()
+        self.add_option_button.destroy()
+        self.start_button.destroy()
+
+        self.poll = Poll(self.options, showupdate_method = self.update_percentages, showfinal_method = self.show_finals)
+        self.pollthread = threading.Thread(target = self.poll.run_poll)
+        self.pollthread.start()
+
+    def update_percentages(self, poll):
+        """Update the displayed percentages"""
+        if not poll.total_votes: #There are no votes yet
+            return
+        for option_frame in self.option_frames:
+            option_frame.percentage = 100 * len(poll.ballot[option_frame.option_name.get()]) / poll.total_votes
+
+    def show_finals(self, poll):
+        """Show the poll winner"""
+        mb.showinfo("Poll complete", "The winner was " + poll.current_winner)
+        self.destroy()
+
+PollWindow()
