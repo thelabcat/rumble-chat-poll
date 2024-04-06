@@ -33,13 +33,13 @@ class Poll(object):
         self.showfinal_method = showfinal_method
 
     def run_poll(self, init_ballot = True):
-        """Run the poll until the time runs out"""
-
+        """Run the poll until the time runs out or it is aborted"""
+        self.manual_ended = False
         if init_ballot or not hasattr(self, "ballot"): #Will initialize the ballot if we don't have one even if init_ballot = False
             self.init_ballot() #Initialize the ballot
 
         self.start_time = time.time()
-        while time.time() - self.start_time < self.duration:
+        while not self.manual_ended and time.time() - self.start_time < self.duration:
             time.sleep(CONFIG["refreshRate"])
             self.check_for_votes()
             if self.showupdate_method:
@@ -234,6 +234,18 @@ class PollWindow(Tk):
         self.pollthread = threading.Thread(target = self.poll.run_poll)
         self.pollthread.start()
 
+        abort_button_row = len(self.options)
+        self.abort_button = Button(self, text = "Abort poll", command = self.abort_poll)
+        self.abort_button.grid(row = abort_button_row, columnspan = 2, sticky = NSEW)
+        self.rowconfigure(abort_button_row, weight = 1)
+        self.rowconfigure(abort_button_row + 1, weight = 0) #Retighten the row below the abort button that was used for the start button
+
+    def abort_poll(self):
+        """End the poll prematurely"""
+        self.poll.manual_ended = True
+        self.abort_button["state"] = "disabled"
+        self.abort_button["text"] = "Aborting..."
+
     def update_percentages(self, poll):
         """Update the displayed percentages"""
         if not poll.total_votes: #There are no votes yet
@@ -243,7 +255,12 @@ class PollWindow(Tk):
 
     def show_finals(self, poll):
         """Show the poll winner"""
-        mb.showinfo("Poll complete", "The winner was " + poll.current_winner)
-        self.destroy()
+        self.abort_button["state"] = "disabled"
+        self.abort_button["text"] = "Ended"
+
+        if self.poll.manual_ended:
+            mb.showinfo("Poll aborted", "The current lead was " + poll.current_winner)
+        else:
+            mb.showinfo("Poll complete", "The winner was " + poll.current_winner)
 
 PollWindow()
