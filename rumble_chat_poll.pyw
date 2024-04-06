@@ -18,7 +18,7 @@ ABORT_BTTN_ROW = 1
 START_BTTN_ROW = 2
 
 #Load config
-CONFIG_PATH = "rumble_chat_poll.toml"
+CONFIG_PATH = "config.toml"
 with open(CONFIG_PATH, "rb") as f:
     CONFIG=tomllib.load(f)
 
