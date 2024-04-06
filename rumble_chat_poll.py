@@ -12,6 +12,10 @@ from tkinter import ttk
 import tkinter.messagebox as mb
 
 MINIMUM_OPTIONS = 2 #Should never be less than two poll options, right?
+OPT_FRAME_ROW = 0
+ADD_BTTN_ROW = 1
+ABORT_BTTN_ROW = 1
+START_BTTN_ROW = 2
 
 #Load config
 CONFIG_PATH = "rumble_chat_poll.toml"
@@ -107,12 +111,12 @@ class Poll(object):
         """Parse a message's UTC timestamp to seconds since epoch"""
         return calendar.timegm(time.strptime(message["created_on"], CONFIG["rumbleTimestampFormat"]))
 
-class PollOption(object):
+class OptionWidgetGroup(object):
     def __init__(self, master, option_name = "", enable_delete = True):
         """Poll option frame"""
         self.master = master
         self.row = 0
-        self.option_name = StringVar(self.master, option_name) #Default option name
+        self.option_name = StringVar(self.master.option_frame, option_name) #Default option name
         self.__enable_delete = enable_delete
         self.configstate_build()
 
@@ -144,19 +148,19 @@ class PollOption(object):
 
     def configstate_build(self):
         """Build the widgets for the configuration state"""
-        self.option_field = Entry(self.master, textvariable = self.option_name)
+        self.option_field = Entry(self.master.option_frame, textvariable = self.option_name)
 
-        self.delete_button = Button(self.master, text = "Delete", command = lambda: self.master.delete_option(self))
+        self.delete_button = Button(self.master.option_frame, text = "Delete", command = lambda: self.master.delete_option(self))
         self.enable_delete = self.__enable_delete #Set the button's state
 
     def switch_to_viewstate(self):
         """Switch to poll option viewing state"""
         self.configstate_destroy()
 
-        self.option_label = Label(self.master, textvariable = self.option_name)
+        self.option_label = Label(self.master.option_frame, textvariable = self.option_name)
         self.option_label.grid(row = self.row, column = 0, sticky = E + W)
 
-        self.option_amount_pb = ttk.Progressbar(self.master, orient = HORIZONTAL, length = 100, mode = "determinate")
+        self.option_amount_pb = ttk.Progressbar(self.master.option_frame, orient = HORIZONTAL, length = 100, mode = "determinate")
         self.option_amount_pb.grid(row = self.row, column = 1, sticky = NSEW)
 
     @property
@@ -173,72 +177,80 @@ class PollWindow(Tk):
     def __init__(self):
         """Window to make and run a poll"""
         super().__init__()
-        self.option_frames = []
+        self.title("Rumble Chat Poll")
+        self.option_wgs = []
         self.configstate_build(firstrun = True)
         self.mainloop()
 
     def configstate_build(self, firstrun = False):
-        """Build the GUI's configuration state view"""
-        while len(self.option_frames) < MINIMUM_OPTIONS: #Make sure we have minimum options
+        """Build the GUI's initial configuration state view"""
+        if firstrun:
+            self.option_frame = Frame(self)
+            self.option_frame.grid(row = OPT_FRAME_ROW, column = 0, sticky = NSEW)
+            self.rowconfigure(OPT_FRAME_ROW, weight = 1)
+
+        while len(self.option_wgs) < MINIMUM_OPTIONS: #Make sure we have minimum options
             self.add_option(build = False)
 
-        for i in range(len(self.option_frames)): #Pack all the option frames
-            self.option_frames[i].place_on_row(i)
-            self.rowconfigure(i, weight = 1) #Let option frames expand vertically
+        for i in range(len(self.option_wgs)): #Pack all the option frames
+            self.option_wgs[i].place_on_row(i)
+            self.option_frame.rowconfigure(i, weight = 1) #Let option frames expand vertically
+        self.option_frame.columnconfigure(0, weight = 1) #Let option fields expand horizontally
 
         if firstrun: #Create add option and start buttons
             self.add_option_button = Button(self, text = "+", command = self.add_option)
+            self.add_option_button.grid(row = ADD_BTTN_ROW, sticky = NSEW)
+            self.rowconfigure(ADD_BTTN_ROW, weight = 1)
+
             self.start_button = Button(self, text = "Start poll", command = self.start_poll)
-        #Pack the buttons
-        self.add_option_button.grid(row = i + 1, columnspan = 2, sticky = NSEW)
-        self.rowconfigure(i + 1, weight = 1)
-        self.start_button.grid(row = i + 2, columnspan = 2, sticky = NSEW)
-        self.rowconfigure(i + 2, weight = 1)
+            self.start_button.grid(row = START_BTTN_ROW, sticky = NSEW)
+            self.rowconfigure(START_BTTN_ROW, weight = 1)
 
         self.columnconfigure(0, weight = 1)
 
     def add_option(self, build = True):
         """Add an option to our list and possibly rebuild GUI"""
-        self.option_frames.append(PollOption(self))
+        self.option_wgs.append(OptionWidgetGroup(self))
         if build:
             self.configstate_build()
 
-    def delete_option(self, option_frame):
+    def delete_option(self, option_wg):
         """Delete an option"""
-        option_frame.configstate_destroy()
-        self.option_frames.remove(option_frame)
+        option_wg.configstate_destroy()
+        self.option_wgs.remove(option_wg)
+        self.option_frame.rowconfigure(len(self.option_wgs), weight = 0) #Retighten the bottom row now that it is empty
         self.configstate_build()
 
     def start_poll(self):
         """Start the poll, and show results"""
         self.options = []
-        for option_frame in self.option_frames:
-            if not option_frame.option_name.get(): #Option field left blank
+        for option_wg in self.option_wgs:
+            if not option_wg.option_name.get(): #Option field left blank
                 mb.showerror("Blank option", "Options cannot be blank.")
                 return
-            if option_frame.option_name.get() in self.options:
+            if option_wg.option_name.get() in self.options:
                 mb.showerror("Duplicate options", "Options must all be unique.")
                 return
-            self.options.append(option_frame.option_name.get())
+            self.options.append(option_wg.option_name.get())
 
-        for option_frame in self.option_frames:
-            option_frame.switch_to_viewstate()
+        for option_wg in self.option_wgs:
+            option_wg.switch_to_viewstate()
         self.add_option_button.destroy()
         self.start_button.destroy()
+        for row in (ADD_BTTN_ROW, START_BTTN_ROW):
+            self.rowconfigure(row, weight = 0)
 
         #Let the progress bars expand now
-        self.columnconfigure(0, weight = 0)
-        self.columnconfigure(1, weight = 1)
+        self.option_frame.columnconfigure(0, weight = 0)
+        self.option_frame.columnconfigure(1, weight = 1)
 
         self.poll = Poll(self.options, showupdate_method = self.update_percentages, showfinal_method = self.show_finals)
         self.pollthread = threading.Thread(target = self.poll.run_poll)
         self.pollthread.start()
 
-        abort_button_row = len(self.options)
+
         self.abort_button = Button(self, text = "Abort poll", command = self.abort_poll)
         self.abort_button.grid(row = abort_button_row, columnspan = 2, sticky = NSEW)
-        self.rowconfigure(abort_button_row, weight = 1)
-        self.rowconfigure(abort_button_row + 1, weight = 0) #Retighten the row below the abort button that was used for the start button
 
     def abort_poll(self):
         """End the poll prematurely"""
@@ -250,8 +262,8 @@ class PollWindow(Tk):
         """Update the displayed percentages"""
         if not poll.total_votes: #There are no votes yet
             return
-        for option_frame in self.option_frames:
-            option_frame.percentage = 100 * len(poll.ballot[option_frame.option_name.get()]) / poll.total_votes
+        for option_wg in self.option_wgs:
+            option_wg.percentage = 100 * len(poll.ballot[option_wg.option_name.get()]) / poll.total_votes
 
     def show_finals(self, poll):
         """Show the poll winner"""
