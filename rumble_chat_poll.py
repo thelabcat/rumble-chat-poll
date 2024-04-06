@@ -107,14 +107,25 @@ class Poll(object):
         """Parse a message's UTC timestamp to seconds since epoch"""
         return calendar.timegm(time.strptime(message["created_on"], CONFIG["rumbleTimestampFormat"]))
 
-class PollOption(Frame):
+class PollOption(object):
     def __init__(self, master, option_name = "", enable_delete = True):
         """Poll option frame"""
-        super().__init__(master)
         self.master = master
-        self.option_name = StringVar(self, option_name) #Default option name
+        self.row = 0
+        self.option_name = StringVar(self.master, option_name) #Default option name
         self.__enable_delete = enable_delete
         self.configstate_build()
+
+    def place_on_row(self, row = 0):
+        """Grid our widgets onto a row of the master"""
+        self.row = row
+        self.option_field.grid(row = row, column = 0, sticky = NSEW)
+        self.delete_button.grid(row = row, column = 1, sticky = NSEW)
+
+    def configstate_destroy(self):
+        """Destroy our widgets"""
+        self.option_field.destroy()
+        self.delete_button.destroy()
 
     @property
     def enable_delete(self):
@@ -133,28 +144,20 @@ class PollOption(Frame):
 
     def configstate_build(self):
         """Build the widgets for the configuration state"""
-        self.option_field = Entry(self, textvariable = self.option_name)
-        self.option_field.grid(row = 0, column = 0, sticky = E + W)
-        self.columnconfigure(0, weight = 1)
+        self.option_field = Entry(self.master, textvariable = self.option_name)
 
-        self.delete_button = Button(self, text = "Delete", command = lambda: self.master.delete_option(self))
+        self.delete_button = Button(self.master, text = "Delete", command = lambda: self.master.delete_option(self))
         self.enable_delete = self.__enable_delete #Set the button's state
-        self.delete_button.grid(row = 0, column = 1, sticky = E + W)
 
     def switch_to_viewstate(self):
         """Switch to poll option viewing state"""
-        self.option_field.destroy()
-        self.delete_button.destroy()
+        self.configstate_destroy()
 
-        self.option_label = Label(self, textvariable = self.option_name)
-        self.option_label.grid(row = 0, column = 0, sticky = E + W)
+        self.option_label = Label(self.master, textvariable = self.option_name)
+        self.option_label.grid(row = self.row, column = 0, sticky = E + W)
 
-        self.option_amount_pb = ttk.Progressbar(self, orient = HORIZONTAL, length = 100, mode = "determinate")
-        #self.option_amount_label = Label(self, text = "0%")
-        self.option_amount_pb.grid(row = 0, column = 1, sticky = E + W)
-        #self.option_amount_label.grid(row = 0, column = 1, sticky = E + W)
-        self.columnconfigure(1, weight = 1)
-        self.columnconfigure(0, weight = 0)
+        self.option_amount_pb = ttk.Progressbar(self.master, orient = HORIZONTAL, length = 100, mode = "determinate")
+        self.option_amount_pb.grid(row = self.row, column = 1, sticky = NSEW)
 
     @property
     def percentage(self):
@@ -180,16 +183,16 @@ class PollWindow(Tk):
             self.add_option(build = False)
 
         for i in range(len(self.option_frames)): #Pack all the option frames
-            self.option_frames[i].grid(row = i, sticky = E + W)
-            self.rowconfigure(i, weight = 0) #Do not let option frames expand vertically
+            self.option_frames[i].place_on_row(i)
+            self.rowconfigure(i, weight = 1) #Let option frames expand vertically
 
         if firstrun: #Create add option and start buttons
             self.add_option_button = Button(self, text = "+", command = self.add_option)
             self.start_button = Button(self, text = "Start poll", command = self.start_poll)
         #Pack the buttons
-        self.add_option_button.grid(row = i + 1, sticky = NSEW)
+        self.add_option_button.grid(row = i + 1, columnspan = 2, sticky = NSEW)
         self.rowconfigure(i + 1, weight = 1)
-        self.start_button.grid(row = i + 2, sticky = NSEW)
+        self.start_button.grid(row = i + 2, columnspan = 2, sticky = NSEW)
         self.rowconfigure(i + 2, weight = 1)
 
         self.columnconfigure(0, weight = 1)
@@ -202,7 +205,7 @@ class PollWindow(Tk):
 
     def delete_option(self, option_frame):
         """Delete an option"""
-        option_frame.destroy()
+        option_frame.configstate_destroy()
         self.option_frames.remove(option_frame)
         self.configstate_build()
 
@@ -222,6 +225,10 @@ class PollWindow(Tk):
             option_frame.switch_to_viewstate()
         self.add_option_button.destroy()
         self.start_button.destroy()
+
+        #Let the progress bars expand now
+        self.columnconfigure(0, weight = 0)
+        self.columnconfigure(1, weight = 1)
 
         self.poll = Poll(self.options, showupdate_method = self.update_percentages, showfinal_method = self.show_finals)
         self.pollthread = threading.Thread(target = self.poll.run_poll)
