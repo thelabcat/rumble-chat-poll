@@ -204,26 +204,37 @@ class PollWindow(Tk):
         self.title("Rumble Chat Poll")
         self.option_wgs = []
         self.configstate_build(firstrun = True)
-        self.api_url = self.get_api_url()
+        self.api_url = None
+        self.get_api_url()
         if self.api_url:
             self.mainloop()
         else:
             self.destroy()
 
-    def get_api_url(self):
+    def get_api_url(self, from_file = True):
         """Get the API URL, requesting it from the user if necessary"""
-        try: #Load the API URL from memory, or ask the user for it later
-            with open(CONFIG["apiURLFile"]) as f:
-                api_url = f.read().strip()
-        except FileNotFoundError:
-            api_url = dialog.askstring("First time setup", "Paste your Rumble API URL from https://rumble.com/account/livestream-api")
-            if not api_url:
+        if from_file:
+            try: #Load the API URL from memory
+                with open(CONFIG["apiURLFile"]) as f:
+                    self.api_url = f.read().strip()
+            except FileNotFoundError:
+                self.get_api_url(from_file = False)
+
+        else: #Ask the user for a new API URL
+            input_url = dialog.askstring("Enter Your API URL", "Paste your Rumble API URL from https://rumble.com/account/livestream-api")
+            if not input_url and not self.api_url: #No URL was input and we don't yet have one
                 mb.showerror("Need API URL", "The program needs your Rumble API URL to access chat messages.")
-            else:
+            elif input_url: #Set and save the new API URL
+                self.api_url = input_url
                 f = open(CONFIG["apiURLFile"], "w")
-                f.write(api_url)
+                f.write(input_url)
                 f.close()
-        return api_url
+
+    def reset_config(self):
+        """Reset the configuration file to the default"""
+        os.remove(CONFIG_PATH)
+        mb.showinfo("Configuration reset", "The configuration file was deleted and will be regenerated on the next launch.")
+        self.destroy()
 
     def configstate_build(self, firstrun = False):
         """Build the GUI's initial configuration state view"""
@@ -231,6 +242,14 @@ class PollWindow(Tk):
             #Set up menu bar
             self.menubar = Menu(self)
             self["menu"] = self.menubar
+            self.menunames = [] #The names of all the menus, for disabling later
+
+            #File menu
+            self.file_menu = Menu(self.menubar)
+            self.file_menu.add_command(label = "Change API URL", command = lambda: self.get_api_url(from_file = False))
+            self.file_menu.add_command(label = "Reset config", command = self.reset_config)
+            self.menubar.add_cascade(label = "File", menu = self.file_menu)
+            self.menunames.append("File")
 
             #Poll duration menu
             self.duration_menu = Menu(self.menubar)
@@ -239,6 +258,7 @@ class PollWindow(Tk):
             for dur_option in CONFIG["durationOptions"].keys():
                 self.duration_menu.add_radiobutton(label = dur_option, variable = self.duration, value = CONFIG["durationOptions"][dur_option])
             self.menubar.add_cascade(label = "Duration", menu = self.duration_menu)
+            self.menunames.append("Duration")
 
             #Set up option frame
             self.option_frame = Frame(self)
@@ -300,7 +320,8 @@ class PollWindow(Tk):
         self.option_frame.columnconfigure(0, weight = 0)
         self.option_frame.columnconfigure(1, weight = 1)
 
-        self.menubar.entryconfig("Duration", state = DISABLED) #Disable the duration menu once the poll starts
+        for menuname in self.menunames:
+            self.menubar.entryconfig(menuname, state = DISABLED) #Disable the menus once the poll starts
 
         #Create the poll
         self.poll = Poll(self.api_url, self.options, duration = self.duration.get(), showupdate_method = self.update_percentages, showfinal_method = self.show_finals, master = self)
