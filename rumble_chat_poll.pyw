@@ -17,10 +17,11 @@ import os
 OP_PATH = __file__[:__file__.rfind(os.sep)] #Path of the extracted exec contents
 
 MINIMUM_OPTIONS = 2 #Should never be less than two poll options, right?
-OPT_FRAME_ROW = 0
-ADD_BTTN_ROW = 1
-ABORT_BTTN_ROW = 1
-START_BTTN_ROW = 2
+STATUS_ROW = 0
+OPT_FRAME_ROW = 1
+ADD_BTTN_ROW = 2
+ABORT_BTTN_ROW = 2
+START_BTTN_ROW = 3
 
 #Load config
 CONFIG_TEMPLATE_PATH = OP_PATH + os.sep + "config_template.toml"
@@ -52,6 +53,14 @@ class Poll(threading.Thread):
         self.showfinal_method = showfinal_method
         self.master = master
         self.killswitch = False
+        self.error = False
+
+    def kill(self, destroy_master = False, error = False):
+        """Kill the loop"""
+        self.killswitch = True
+        self.error = self.error or error
+        if destroy_master and self.master:
+            self.master.destroy()
 
     def run(self, init_ballot = True):
         """Run the poll until the time runs out or it is aborted"""
@@ -61,11 +70,12 @@ class Poll(threading.Thread):
         self.start_time = time.time()
         while not self.killswitch and time.time() - self.start_time < self.duration:
             self.check_for_votes()
-            if self.showupdate_method:
-                self.showupdate_method(self)
-            time.sleep(CONFIG["refreshRate"])
+            if not self.killswitch:
+                if self.showupdate_method:
+                    self.showupdate_method(self)
+                time.sleep(CONFIG["refreshRate"])
 
-        if self.showfinal_method:
+        if not self.error and self.showfinal_method:
             self.showfinal_method(self)
 
     @property
@@ -86,10 +96,15 @@ class Poll(threading.Thread):
 
     def check_for_votes(self):
         """Get recent messages from the Rumble API and check for new votes"""
+        # try:
         response = requests.get(self.api_url, headers = CONFIG["APIHeaders"])
+        # except requests.exceptions.ConnectionError as e:
+        #     mb.showerror("Connection error", str(e))
+        #     self.kill(destroy_master = True, error = True)
+        #     return
         if response.status_code != 200:
-            self.killswitch = True
             mb.showerror("Could not check for votes", "HTTP error " + str(response.status_code))
+            self.kill(destroy_master = True, error = True)
             return
         livestream = self.get_livestream(response.json())
         if not livestream:
@@ -116,9 +131,7 @@ class Poll(threading.Thread):
         """Select the specific livestream the poll is supposed to run on from the API json"""
         if len(json["livestreams"]) == 0:
             mb.showerror("You are not live", "Could not find any livestreams at the configured API URL.")
-            self.killswitch = True
-            if self.master:
-                self.master.destroy()
+            self.kill(destroy_master = True, error = True)
             return
 
         if not self.livestream_id: #No specific livestream was specified
@@ -181,11 +194,13 @@ class OptionWidgetGroup(object):
         """Switch to poll option viewing state"""
         self.configstate_destroy()
 
-        self.option_label = Label(self.master.option_frame, textvariable = self.option_name)
+        self.option_label_value = StringVar(self.master.option_frame)
+        self.option_label = Label(self.master.option_frame, textvariable = self.option_label_value)
         self.option_label.grid(row = self.row, column = 0, sticky = E + W)
 
         self.option_amount_pb = ttk.Progressbar(self.master.option_frame, orient = HORIZONTAL, length = 100, mode = "determinate")
         self.option_amount_pb.grid(row = self.row, column = 1, sticky = NSEW)
+        self.percentage = 0
 
     @property
     def percentage(self):
@@ -195,6 +210,7 @@ class OptionWidgetGroup(object):
     def percentage(self, new_percentage):
         if 0 <= int(new_percentage) <=100:
             self.option_amount_pb["value"] = int(new_percentage)
+            self.option_label_value.set(self.option_name.get() + ": " + str(int(new_percentage)) + "%")
             #self.option_amount_label["text"] = str(int(new_percentage))+"%"
 
 class PollWindow(Tk):
@@ -239,6 +255,7 @@ class PollWindow(Tk):
     def configstate_build(self, firstrun = False):
         """Build the GUI's initial configuration state view"""
         if firstrun:
+            self.geometry("300x200")
             #Set up menu bar
             self.menubar = Menu(self)
             self["menu"] = self.menubar
@@ -264,6 +281,10 @@ class PollWindow(Tk):
             self.option_frame = Frame(self)
             self.option_frame.grid(row = OPT_FRAME_ROW, column = 0, sticky = NSEW)
             self.rowconfigure(OPT_FRAME_ROW, weight = 1)
+
+            self.status = StringVar(self)
+            self.status_display = Label(self, textvariable = self.status)
+            self.status_display.grid(row = STATUS_ROW, column = 0, sticky = NSEW)
 
         while len(self.option_wgs) < MINIMUM_OPTIONS: #Make sure we have minimum options
             self.add_option(build = False)
@@ -324,7 +345,7 @@ class PollWindow(Tk):
             self.menubar.entryconfig(menuname, state = DISABLED) #Disable the menus once the poll starts
 
         #Create the poll
-        self.poll = Poll(self.api_url, self.options, duration = self.duration.get(), showupdate_method = self.update_percentages, showfinal_method = self.show_finals, master = self)
+        self.poll = Poll(self.api_url, self.options, duration = self.duration.get(), showupdate_method = self.show_updates, showfinal_method = self.show_finals, master = self)
         self.poll.start()
 
 
@@ -333,12 +354,13 @@ class PollWindow(Tk):
 
     def abort_poll(self):
         """End the poll prematurely"""
-        self.poll.killswitch = True
+        self.poll.kill()
         self.abort_button["state"] = "disabled"
         self.abort_button["text"] = "Aborting..."
 
-    def update_percentages(self, poll):
+    def show_updates(self, poll):
         """Update the displayed percentages"""
+        self.status.set("Votes: " + str(poll.total_votes) + "\nApprox " + str(int(self.duration.get() + self.poll.start_time - time.time() + 0.5)) + " seconds remaining.")
         if not poll.total_votes: #There are no votes yet
             return
         for option_wg in self.option_wgs:
