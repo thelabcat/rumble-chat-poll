@@ -10,6 +10,11 @@ import threading
 from tkinter import *
 from tkinter import ttk
 import tkinter.messagebox as mb
+import tkinter.simpledialog as dialog
+import sys
+import os
+
+OP_PATH = __file__[:__file__.rfind(os.sep)] #Path of the extracted exec contents
 
 MINIMUM_OPTIONS = 2 #Should never be less than two poll options, right?
 OPT_FRAME_ROW = 0
@@ -18,36 +23,47 @@ ABORT_BTTN_ROW = 1
 START_BTTN_ROW = 2
 
 #Load config
+CONFIG_TEMPLATE_PATH = OP_PATH + os.sep + "config_template.toml"
 CONFIG_PATH = "config.toml"
-with open(CONFIG_PATH, "rb") as f:
-    CONFIG=tomllib.load(f)
+try:
+    with open(CONFIG_PATH, "rb") as f:
+        CONFIG=tomllib.load(f)
 
-with open(CONFIG["apiURLFile"]) as f:
-    API_URL = f.read().strip()
+except FileNotFoundError: #No config file, create it
+    f = open(CONFIG_TEMPLATE_PATH)
+    config_text = f.read()
+    f.close()
+    f = open(CONFIG_PATH, "w")
+    f.write(config_text)
+    f.close()
+    CONFIG = tomllib.loads(config_text)
 
-class Poll(object):
-    def __init__(self, options, numeric = True, livestream_id = None, duration = 60, showupdate_method = None, showfinal_method = None):
+class Poll(threading.Thread):
+    def __init__(self, api_url, options, numeric = True, livestream_id = None, duration = 60, showupdate_method = None, showfinal_method = None, master = None):
         """Poll chat using Rumble's API. If numeric, accept number votes as well as exact matches. Runtime is in seconds"""
+        super().__init__(daemon = True)
+        self.api_url = api_url
+        self.options = options #Options of the poll
         self.numeric = numeric
-        self.options = options
         self.voted = [] #List of users who voted
         self.livestream_id = livestream_id
         self.duration = duration
         self.showupdate_method = showupdate_method
         self.showfinal_method = showfinal_method
+        self.master = master
+        self.killswitch = False
 
-    def run_poll(self, init_ballot = True):
+    def run(self, init_ballot = True):
         """Run the poll until the time runs out or it is aborted"""
-        self.manual_ended = False
         if init_ballot or not hasattr(self, "ballot"): #Will initialize the ballot if we don't have one even if init_ballot = False
             self.init_ballot() #Initialize the ballot
 
         self.start_time = time.time()
-        while not self.manual_ended and time.time() - self.start_time < self.duration:
-            time.sleep(CONFIG["refreshRate"])
+        while not self.killswitch and time.time() - self.start_time < self.duration:
             self.check_for_votes()
             if self.showupdate_method:
                 self.showupdate_method(self)
+            time.sleep(CONFIG["refreshRate"])
 
         if self.showfinal_method:
             self.showfinal_method(self)
@@ -70,11 +86,15 @@ class Poll(object):
 
     def check_for_votes(self):
         """Get recent messages from the Rumble API and check for new votes"""
-        response = requests.get(API_URL, headers = CONFIG["APIHeaders"])
+        response = requests.get(self.api_url, headers = CONFIG["APIHeaders"])
         if response.status_code != 200:
-            print("HTTP error", response.status)
+            self.killswitch = True
+            mb.showerror("Could not check for votes", "HTTP error " + str(response.status_code))
             return
-        messages = self.get_livestream(response.json())["chat"]["recent_messages"]
+        livestream = self.get_livestream(response.json())
+        if not livestream:
+            return
+        messages = livestream["chat"]["recent_messages"]
         for message in messages:
             if self.parse_message_time(message) >= self.start_time and message["username"] not in self.voted and self.parse_vote(message["text"]): #This person has not voted and their message parses to a vote
                 #Vote!
@@ -94,8 +114,12 @@ class Poll(object):
 
     def get_livestream(self, json):
         """Select the specific livestream the poll is supposed to run on from the API json"""
-        if len(json["livestreams"]) == [0]:
-            raise Exception("You are not live")
+        if len(json["livestreams"]) == 0:
+            mb.showerror("You are not live", "Could not find any livestreams at the configured API URL.")
+            self.killswitch = True
+            if self.master:
+                self.master.destroy()
+            return
 
         if not self.livestream_id: #No specific livestream was specified
             return json["livestreams"][0] #Return the first one
@@ -180,7 +204,26 @@ class PollWindow(Tk):
         self.title("Rumble Chat Poll")
         self.option_wgs = []
         self.configstate_build(firstrun = True)
-        self.mainloop()
+        self.api_url = self.get_api_url()
+        if self.api_url:
+            self.mainloop()
+        else:
+            self.destroy()
+
+    def get_api_url(self):
+        """Get the API URL, requesting it from the user if necessary"""
+        try: #Load the API URL from memory, or ask the user for it later
+            with open(CONFIG["apiURLFile"]) as f:
+                api_url = f.read().strip()
+        except FileNotFoundError:
+            api_url = dialog.askstring("First time setup", "Paste your Rumble API URL from https://rumble.com/account/livestream-api")
+            if not api_url:
+                mb.showerror("Need API URL", "The program needs your Rumble API URL to access chat messages.")
+            else:
+                f = open(CONFIG["apiURLFile"], "w")
+                f.write(api_url)
+                f.close()
+        return api_url
 
     def configstate_build(self, firstrun = False):
         """Build the GUI's initial configuration state view"""
@@ -260,9 +303,8 @@ class PollWindow(Tk):
         self.menubar.entryconfig("Duration", state = DISABLED) #Disable the duration menu once the poll starts
 
         #Create the poll
-        self.poll = Poll(self.options, duration = self.duration.get(), showupdate_method = self.update_percentages, showfinal_method = self.show_finals)
-        self.pollthread = threading.Thread(target = self.poll.run_poll)
-        self.pollthread.start()
+        self.poll = Poll(self.api_url, self.options, duration = self.duration.get(), showupdate_method = self.update_percentages, showfinal_method = self.show_finals, master = self)
+        self.poll.start()
 
 
         self.abort_button = Button(self, text = "Abort poll", command = self.abort_poll)
@@ -270,7 +312,7 @@ class PollWindow(Tk):
 
     def abort_poll(self):
         """End the poll prematurely"""
-        self.poll.manual_ended = True
+        self.poll.killswitch = True
         self.abort_button["state"] = "disabled"
         self.abort_button["text"] = "Aborting..."
 
@@ -286,7 +328,7 @@ class PollWindow(Tk):
         self.abort_button["state"] = "disabled"
         self.abort_button["text"] = "Ended"
 
-        if self.poll.manual_ended:
+        if self.poll.killswitch:
             mb.showinfo("Poll aborted", "The current lead was " + poll.current_winner)
         else:
             mb.showinfo("Poll complete", "The winner was " + poll.current_winner)
