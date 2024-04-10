@@ -2,10 +2,11 @@
 Use the Rumble Livestream API to poll your chat. Users can vote with exact matches to option names, or numerically (the top option is 1).
 
 ## Dependencies
-This program has no dependencies outside of native Python libraries
+This program depends on the following Python libraries:
+- [Requests](https://pypi.org/project/requests/)
 
 ## Usage
-To run from source, install Python 3.12 and use it to run rumble_chat_poll.pyw *after setting up your API URL.*
+To run from source, install Python 3.12 and the listed dependencies, then run rumble_chat_poll.pyw *after setting up your API URL.*
 See the TOML configuration file for various system settings you may want to alter, but be careful what you do there.
 
 1. Create a new file called api_url.txt in the same directory as the program, and paste your desired channel's Rumble Livestream API URL (with the key) into it. You can get that URL [here](https://rumble.com/account/livestream-api). Then, run the program.
