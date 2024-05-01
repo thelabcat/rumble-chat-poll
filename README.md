@@ -6,7 +6,7 @@ This program depends on the following Python libraries:
 - [Requests](https://pypi.org/project/requests/)
 
 ## Usage
-To run from source, install Python 3.12 and the listed dependencies, then run rumble_chat_poll.pyw. Don't edit config_template.toml.
+To run from source, install Python >= 3.9 and the listed dependencies, then run rumble_chat_poll.pyw. Don't edit config_template.toml.
 
 When running from source or binary:
 1. When the program first runs, it will copy config_template.toml (bundled in the executables) to config.toml (which you can edit later), and try to read your Rumble Livestream API URL from api_url.txt. If it can't find api_url.txt, it will ask you to enter the URL, and then it will save it. You can get that URL [here](https://rumble.com/account/livestream-api).
