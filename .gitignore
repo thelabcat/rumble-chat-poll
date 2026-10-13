@@ -1,0 +1,7 @@
+api_url.txt
+config.toml
+build/
+dist/
+rumble_chat_poll.spec
+__pycache__/
+*.pyc
