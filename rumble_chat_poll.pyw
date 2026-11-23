@@ -81,18 +81,16 @@ class Poll(threading.Thread):
     @property
     def current_winner(self):
         """Get current winner in the poll"""
-        return max(self.ballot.keys(), key = lambda x: len(self.ballot[x])) #Find the option with the longest list of voters
+        return max(self.ballot, key = lambda x: len(self.ballot[x])) #Find the option with the longest list of voters
 
     @property
     def total_votes(self):
         """Get current number of votes"""
-        return sum([len(x) for x in self.ballot.values()])
+        return sum(len(x) for x in self.ballot.values())
 
     def init_ballot(self):
         """Create a dict ballot with lists for each option, to add votes to"""
-        self.ballot = {}
-        for option in self.options:
-            self.ballot[option] = []
+        self.ballot = {option: [] for option in self.options}
 
     def check_for_votes(self):
         """Get recent messages from the Rumble API and check for new votes"""
@@ -272,8 +270,8 @@ class PollWindow(Tk):
             self.duration_menu = Menu(self.menubar)
             self.duration = IntVar(self)
             self.duration.set(CONFIG["durationDefault"])
-            for dur_option in CONFIG["durationOptions"].keys():
-                self.duration_menu.add_radiobutton(label = dur_option, variable = self.duration, value = CONFIG["durationOptions"][dur_option])
+            for label, seconds in CONFIG["durationOptions"].items():
+                self.duration_menu.add_radiobutton(label = label, variable = self.duration, value = seconds)
             self.menubar.add_cascade(label = "Duration", menu = self.duration_menu)
             self.menunames.append("Duration")
 
@@ -289,8 +287,8 @@ class PollWindow(Tk):
         while len(self.option_wgs) < MINIMUM_OPTIONS: #Make sure we have minimum options
             self.add_option(build = False)
 
-        for i in range(len(self.option_wgs)): #Pack all the option frames
-            self.option_wgs[i].place_on_row(i)
+        for i, option_wg in enumerate(self.option_wgs): #Pack all the option frames
+            option_wg.place_on_row(i)
             self.option_frame.rowconfigure(i, weight = 1) #Let option frames expand vertically
         self.option_frame.columnconfigure(0, weight = 1) #Let option fields expand horizontally
 
