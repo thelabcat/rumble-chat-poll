@@ -7,14 +7,13 @@ import requests
 import time
 import calendar
 import threading
+from pathlib import Path
 from tkinter import *
 from tkinter import ttk
 import tkinter.messagebox as mb
 import tkinter.simpledialog as dialog
-import sys
-import os
 
-OP_PATH = __file__[:__file__.rfind(os.sep)] #Path of the extracted exec contents
+OP_PATH = Path(__file__).parent #Path of the extracted exec contents
 
 MINIMUM_OPTIONS = 2 #Should never be less than two poll options, right?
 STATUS_ROW = 0
@@ -24,19 +23,15 @@ ABORT_BTTN_ROW = 2
 START_BTTN_ROW = 3
 
 #Load config
-CONFIG_TEMPLATE_PATH = OP_PATH + os.sep + "config_template.toml"
-CONFIG_PATH = "config.toml"
+CONFIG_TEMPLATE_PATH = OP_PATH / "config_template.toml"
+CONFIG_PATH = Path("config.toml")
 try:
-    with open(CONFIG_PATH, "rb") as f:
+    with CONFIG_PATH.open("rb") as f:
         CONFIG=tomllib.load(f)
 
 except FileNotFoundError: #No config file, create it
-    f = open(CONFIG_TEMPLATE_PATH)
-    config_text = f.read()
-    f.close()
-    f = open(CONFIG_PATH, "w")
-    f.write(config_text)
-    f.close()
+    config_text = CONFIG_TEMPLATE_PATH.read_text()
+    CONFIG_PATH.write_text(config_text)
     CONFIG = tomllib.loads(config_text)
 
 class Poll(threading.Thread):
@@ -231,8 +226,7 @@ class PollWindow(Tk):
         """Get the API URL, requesting it from the user if necessary"""
         if from_file:
             try: #Load the API URL from memory
-                with open(CONFIG["apiURLFile"]) as f:
-                    self.api_url = f.read().strip()
+                self.api_url = Path(CONFIG["apiURLFile"]).read_text().strip()
             except FileNotFoundError:
                 self.get_api_url(from_file = False)
 
@@ -242,13 +236,11 @@ class PollWindow(Tk):
                 mb.showerror("Need API URL", "The program needs your Rumble API URL to access chat messages.")
             elif input_url: #Set and save the new API URL
                 self.api_url = input_url
-                f = open(CONFIG["apiURLFile"], "w")
-                f.write(input_url)
-                f.close()
+                Path(CONFIG["apiURLFile"]).write_text(input_url)
 
     def reset_config(self):
         """Reset the configuration file to the default"""
-        os.remove(CONFIG_PATH)
+        CONFIG_PATH.unlink()
         mb.showinfo("Configuration reset", "The configuration file was deleted and will be regenerated on the next launch.")
         self.destroy()
 
